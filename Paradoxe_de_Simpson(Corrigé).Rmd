@@ -1,0 +1,272 @@
+---
+title: "Paradoxe de Simpson (Corrigé)"
+output:
+  html_document:
+    
+    mathjax: default
+
+header-includes:
+  - \(\require{color}\)
+---
+
+<style>
+body {
+  font-family: "Times New Roman", serif;
+  line-height: 1.6;
+  max-width: 800px;
+  margin: auto;
+}
+h1.title { display: none; }
+.custom-title {
+  text-align: center;
+  font-size: 36px;
+  font-weight: bold;
+  margin-top: 30px;
+  margin-bottom: 40px;
+}
+details {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 10px;
+  background-color: #f9f9f9;
+  margin-top: 10px;
+}
+summary {
+  font-weight: bold;
+  cursor: pointer;
+}
+</style>
+
+<div class="custom-title">Paradoxe de Simpson (Corrigé)</div>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(ggplot2)
+library(scales)
+```
+
+
+# **Illustration du paradoxe de Simpson**
+
+Pour illustrer le paradoxe de Simpson, nous utilisons des données publiques<sup><a href="#ref1">1</a></sup> sur la vaccination contre le COVID-19 au Royaume-Uni. L'analyse porte sur la période du 1er février 2021 au 2 août 2021. Les données analysées correspondent aux cas impliquant le variant Delta (B.1.617.2), qui était la souche dominante en circulation au Royaume-Uni à cette époque.
+
+
+
+
+##### 1) Charger la base de données *simpsons_paradox_covid.rda*
+
+
+
+```{r}
+# Charger le fichier .rda contenant le jeu de données dans l'environnement R
+load("simpsons_paradox_covid.rda")
+
+# Attribuer l'objet chargé à un nom plus simple
+covid <- simpsons_paradox_covid
+
+# Afficher la structure du jeu de données (variables, types, etc.)
+str(covid)
+
+# Afficher les premières lignes du jeu de données
+head(covid)
+```
+
+
+
+
+##### 2) Calculer les taux de mortalité marginaux (c'est-à-dire la proportion de décès) dans les groupes « vaccinés » et « non vaccinés ».
+
+
+
+```{r}
+library(dplyr)        # Pour la manipulation de données
+library(knitr)        # Pour l'affichage de tableaux
+library(kableExtra)   # Pour la mise en forme avancée des tableaux
+
+
+# Calculer les taux de mortalité marginaux par statut vaccinal
+marginal_table <- covid %>%
+  group_by(vaccine_status) %>%        # Regrouper par statut vaccinal
+  summarise(
+    deaths = sum(outcome == "death"), # Compter le nombre de décès dans chaque groupe
+    total = n(),                     # Compter le nombre total d'individus dans chaque groupe
+    rate = deaths / total            # Calculer le taux de mortalité (proportion de décès)
+  )
+
+# Afficher le résultat
+marginal_table
+
+
+### Mise en forme améliorée du tableau ###
+
+# Formater les résultats pour l'affichage
+marginal_table <- marginal_table %>%
+  mutate(
+    rate_pct = round(100 * rate, 4),
+    display = paste0(rate_pct, "% (", deaths, "/", total, ")")
+  )
+
+# Créer un tableau propre et formaté
+marginal_table %>%
+  select(Vaccin = vaccine_status, Décès = deaths, Total = total, Marginal = display) %>%
+  kable(align = "c") %>%
+  kable_styling(full_width = FALSE) %>% 
+  column_spec(4, bold = TRUE, color = "blue")
+
+
+
+```
+
+
+
+
+
+
+##### 3) Calculer les taux de mortalité par groupe d'âge au sein des groupes vaccinés et non vaccinés.
+
+
+
+
+```{r}
+
+library(dplyr)      # Pour la manipulation de données
+library(tidyr)      # Pour le remodelage des données
+library(knitr)      # Pour l'affichage de tableaux
+library(kableExtra) # Pour la mise en forme des tableaux
+
+# Calculer les taux de mortalité par groupe d'âge et statut vaccinal
+age_table <- covid %>%
+  group_by(age_group, vaccine_status) %>%
+  summarise(
+    deaths = sum(outcome == "death"),
+    total = n(),
+    rate = deaths / total,
+    .groups = "drop"
+  )
+
+# Afficher le résultat
+age_table
+
+
+### Mise en forme améliorée du tableau ###
+
+age_table <- age_table %>%
+  mutate(
+    rate_pct = round(100 * rate, 4),
+    display = paste0(rate_pct, "% (", deaths, "/", total, ")")
+  )
+
+# Reformater en format large (groupes d'âge en colonnes)
+age_table <- age_table %>%
+  select(vaccine_status, age_group, display) %>%
+  pivot_wider(
+    names_from = age_group,
+    values_from = display
+  )
+
+# Fusionner avec le tableau de mortalité marginale
+final_table <- age_table %>%
+  left_join(marginal_table, by = "vaccine_status")
+
+# Afficher le tableau final
+final_table %>%
+  rename(Vaccin = vaccine_status) %>%
+  select(Vaccin, 'under 50', '50 +', Marginal = display) %>%
+  kable(align = "c") %>%
+  add_header_above(c(" " = 1, "Groupe d'âge" = 2, " " = 1)) %>%
+  kable_styling(full_width = FALSE)
+
+
+```
+
+
+
+
+
+##### 4) Comparer les taux de mortalité marginaux (2) avec les taux de mortalité stratifiés par groupe d'âge (3), et interpréter les différences observées.
+
+
+
+
+
+
+
+## Interprétation du paradoxe de Simpson
+
+Si l'on examine les taux de mortalité marginaux, on observe qu'ils suggèrent un risque de décès plus élevé chez les individus vaccinés (0.4107\%) par rapport aux individus non vaccinés (0.1675\%).
+
+Cependant, lorsque l'on analyse les taux de mortalité au sein de chaque groupe d'âge, cette relation s'inverse. Parmi les individus de 50 ans et plus, les non vaccinés présentent un risque de mortalité plus élevé (5.9593\%) par rapport aux vaccinés (1.6845\%). De même, parmi les individus de moins de 50 ans, le risque de mortalité est également plus élevé chez les non vaccinés (0.0325\%) que chez les vaccinés (0.0234\%).
+
+Ce paradoxe apparent s'explique par les différences dans la distribution de l'âge entre les deux groupes. Les individus de 50 ans et plus, qui sont naturellement plus à risque de décès indépendamment du statut vaccinal, sont davantage présents dans le groupe vacciné que dans le groupe non vacciné.
+
+---
+
+### Distribution de l'âge au sein de chaque groupe de vaccination
+
+```{r echo=FALSE}
+covid %>%
+  count(vaccine_status, age_group) %>%
+  group_by(vaccine_status) %>%
+  mutate(prop = n / sum(n),
+         label = percent(prop, accuracy = 0.01)) %>%
+  ggplot(aes(x = vaccine_status, y = prop, fill = age_group)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 5) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = c("under 50" = "#9ecae1", "50 +" = "#de2d26")) +
+  labs(x = "Statut vaccinal", y = "Proportion", fill = "Groupe d'âge") +
+  theme_minimal(base_size = 14)
+```
+
+La figure montre que les individus de 50 ans et plus représentent 23.32\% du groupe vacciné, contre seulement 2.28\% du groupe non vacciné.
+
+Par conséquent, lorsque l'on compare les taux de mortalité marginaux, on compare en réalité des groupes qui ne sont pas équilibrés en termes d'âge. En conséquence, les taux marginaux reflètent non seulement l'effet de la vaccination, mais aussi l'effet de l'âge.
+
+---
+
+### Explication mathématique
+
+#### Groupe non vacciné
+
+$$
+\begin{aligned}
+&\mathbb{P}(\text{Décès} \mid \text{Non vacciné})\\
+&= \mathbb{P}(\text{Décès} \mid \text{Non vacciné, <50}) \cdot \color{blue}{\mathbb{P}(\text{<50} \mid \text{Non vacciné})} + \mathbb{P}(\text{Décès} \mid \text{Non vacciné, 50+}) \cdot \color{red}{\mathbb{P}(\text{50+} \mid \text{Non vacciné})} \\
+&= 0.0325\% \cdot \color{blue}{0.9772}
++ 5.9593\% \cdot \color{red}{0.0228} \\
+&\approx 0.1675\%
+\end{aligned}
+$$
+
+---
+
+#### Groupe vacciné
+
+$$
+\begin{aligned}
+&\mathbb{P}(\text{Décès} \mid \text{Vacciné})\\
+&= \mathbb{P}(\text{Décès} \mid \text{Vacciné, <50}) \cdot \color{blue}{\mathbb{P}(\text{<50} \mid \text{Vacciné})} + \mathbb{P}(\text{Décès} \mid \text{Vacciné, 50+}) \cdot \color{red}{\mathbb{P}(\text{50+} \mid \text{Vacciné})} \\
+&= 0.0234\% \cdot \color{blue}{0.7668}
++ 1.6845\% \cdot \color{red}{0.2332} \\
+&\approx 0.4107\%
+\end{aligned}
+$$
+
+---
+
+En se concentrant sur le second terme de chaque somme (qui correspond aux individus de 50 ans et plus), on observe que, bien que le risque de mortalité soit plus élevé chez les non vaccinés :
+
+$$
+\mathbb{P}(\text{Décès} \mid \text{Non vacciné, 50+}) >
+\mathbb{P}(\text{Décès} \mid \text{Vacciné, 50+}) \quad (5.9593\% > 1.6845\%)
+$$
+
+le poids associé à $\mathbb{P}(\text{Décès} \mid \text{Non vacciné, 50+})$ est beaucoup plus petit que celui associé à $\mathbb{P}(\text{Décès} \mid \text{Vacciné, 50+})$ :
+
+$$
+\mathbb{P}(\text{50+} \mid \text{Vacciné}) = 0.2332 > 0.0228 = \mathbb{P}(\text{50+} \mid \text{Non vacciné})
+$$
+
+Ce déséquilibre explique l'inversion de l'effet lorsque l'on compare les groupes marginalement versus au sein des strates d'âge.
+

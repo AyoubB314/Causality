@@ -1,0 +1,144 @@
+---
+title: "Paradoxe de Simpson (Énoncé)"
+output:
+  html_document:
+    
+    mathjax: default
+
+header-includes:
+  - \(\require{color}\)
+---
+
+<style>
+body {
+  font-family: "Times New Roman", serif;
+  line-height: 1.6;
+  max-width: 800px;
+  margin: auto;
+}
+h1.title { display: none; }
+.custom-title {
+  text-align: center;
+  font-size: 36px;
+  font-weight: bold;
+  margin-top: 30px;
+  margin-bottom: 40px;
+}
+details {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 10px;
+  background-color: #f9f9f9;
+  margin-top: 10px;
+}
+summary {
+  font-weight: bold;
+  cursor: pointer;
+}
+</style>
+
+<div class="custom-title">Paradoxe de Simpson (Énoncé)</div>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(ggplot2)
+library(scales)
+library(dplyr)        # Pour la manipulation de données
+library(knitr)        # Pour l'affichage de tableaux
+library(kableExtra)   # Pour la mise en forme avancée des tableaux
+library(tidyr)      # Pour le remodelage des données
+
+```
+
+
+# **Illustration du paradoxe de Simpson**
+
+Pour illustrer le paradoxe de Simpson, nous utilisons des données publiques<sup><a href="#ref1">1</a></sup> sur la vaccination contre le COVID-19 au Royaume-Uni. L'analyse porte sur la période du 1er février 2021 au 2 août 2021. Les données analysées correspondent aux cas impliquant le variant Delta (B.1.617.2), qui était la souche dominante en circulation au Royaume-Uni à cette époque.
+
+
+
+
+##### 1) Charger la base de données *simpsons_paradox_covid.rda*
+
+
+
+```{r}
+# Charger le fichier .rda contenant le jeu de données dans l'environnement R
+load("simpsons_paradox_covid.rda")
+
+# Attribuer l'objet chargé à un nom plus simple
+covid <- simpsons_paradox_covid
+
+# Afficher la structure du jeu de données (variables, types, etc.)
+str(covid)
+
+# Afficher les premières lignes du jeu de données
+head(covid)
+```
+
+
+
+
+
+
+
+
+
+##### 2) Calculer les taux de mortalité marginaux (c'est-à-dire la proportion de décès) dans les groupes « vaccinés » et « non vaccinés ».
+
+
+
+```{r,eval=FALSE}
+
+
+
+# Calculer les taux de mortalité marginaux par statut vaccinal
+marginal_table <- covid %>%
+  group_by() %>%        # Regrouper par statut vaccinal
+  summarise(
+    deaths = sum(outcome == ""), # Compter le nombre de décès dans chaque groupe
+    total = n(),                     # Compter le nombre total d'individus dans chaque groupe
+    rate =             # Calculer le taux de mortalité (proportion de décès)
+  )
+
+# Afficher le résultat
+marginal_table
+
+
+```
+
+
+
+
+
+
+##### 3) Calculer les taux de mortalité par groupe d'âge au sein des groupes vaccinés et non vaccinés.
+
+
+
+
+```{r,eval=FALSE}
+
+
+# Calculer les taux de mortalité par groupe d'âge et statut vaccinal
+age_table <- covid %>%
+  group_by(,) %>%
+  summarise(
+    deaths = sum(outcome == ""),
+    total = n(),
+    rate = ,
+    .groups = "drop"
+  )
+
+# Afficher le résultat
+age_table
+
+
+```
+
+
+
+##### 4) Comparer les taux de mortalité marginaux (2) avec les taux de mortalité stratifiés par groupe d'âge (3), et interpréter les différences observées.
+
+
+

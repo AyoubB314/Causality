@@ -1,0 +1,762 @@
+---
+title: "TP CAUSALITÉ (Corrigé)"
+output:
+  html_document:
+    
+    mathjax: default
+
+header-includes:
+  - \(\require{color}\)
+---
+
+<style>
+body {
+  font-family: "Times New Roman", serif;
+  line-height: 1.6;
+  max-width: 800px;
+  margin: auto;
+}
+h1.title { display: none; }
+.custom-title {
+  text-align: center;
+  font-size: 36px;
+  font-weight: bold;
+  margin-top: 30px;
+  margin-bottom: 40px;
+}
+details {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 10px;
+  background-color: #f9f9f9;
+  margin-top: 10px;
+}
+summary {
+  font-weight: bold;
+  cursor: pointer;
+}
+</style>
+
+<div class="custom-title">TP CAUSALITÉ (Corrigé)</div>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+```
+
+
+
+
+
+# **Partie 1. Inverse Probability Treatment Weighting (IPTW)**
+
+
+
+
+
+
+
+##### 1.1) Charger la base de données *hosmer.xlsx*
+
+
+```{r}
+library(readxl)
+hosmer <- read_excel("hosmer.xlsx")
+hosmer <- as.data.frame(hosmer)
+# Afficher la structure du jeu de données (variables, types, etc.)
+str(hosmer)
+
+# Afficher les premières lignes du jeu de données
+head(hosmer)
+```
+
+
+
+
+
+##### 1.2) À l'aide de la fonction *port* du package *RISCA*, vérifier l'hypothèse de positivité. 
+
+
+```{r echo=FALSE, fig.width=4, fig.height=3, out.width="50%",fig.align="center"}
+library(rpart)
+library(rpart.plot)
+
+fit_RACE <- rpart(
+  T ~ RACE,
+  data = hosmer,
+  method = "anova",
+  control = rpart.control(
+    cp = 0,
+    minbucket = 6,
+    minsplit = 20,
+    maxdepth = 30
+  )
+)
+
+rpart.plot(fit_RACE,
+           extra = 101,
+           type = 2,
+           fallen.leaves = TRUE,
+           main = "Regression tree: T ~ RACE")
+```
+
+
+
+
+
+```{r}
+library(RISCA)
+
+
+port(group = "T",
+     cov.quanti = c("AGE", "LWT"),
+     cov.quali = c("RACE", "HT"),
+     data = hosmer, alpha = 0.05, beta = 0.05, gamma = 1)
+
+```
+
+
+
+Aux seuils **alpha=0.05** et **beta=0.05**, la fonction ne signale aucune violation de la positivité.
+
+
+```{r}
+
+port(group = "T",
+     cov.quanti = c("AGE", "LWT"),
+     cov.quali = c("RACE", "HT"),
+     data = hosmer, alpha = 0.2, beta = 0.3, gamma = 1)
+
+```
+
+
+
+
+On constate que pour les seuils **alpha=0.2** et **beta=0.3**, la fonction signale une violation de la positivité: le sous-groupe des individus de catégorie **RACE=3** est suffisamment grand pour être considéré comme problématique ($35.4\% >$ **beta** $=30\%$), et leur probabilité d'être exposés est trop faible ($17.9\% <$ **alpha** $=20\%$). 
+
+
+##### 1.2) Construire le modèle d'exposition par régression logistique multivariée, et extraire le score de propension pour chaque individu.
+
+
+
+```{r}
+library(WeightIt)
+
+# Les modèles avec splines ou polynômes peuvent être facilement intégrés en ajoutant des termes bs(), ns() ou poly() dans la formule.
+IPW_Model <- weightit(T ~ AGE +  RACE  + LWT:RACE + HT,
+              method = "glm", estimand = "ATE",
+              data = hosmer,
+              stabilize = TRUE)
+
+# Extraire les scores de propension estimés P(T=1 | W) pour chaque individu
+head(IPW_Model$ps)
+```
+
+
+
+##### 1.3) Vérifier l'hypothèse de positivité en traçant la distribution du score de propension dans les deux groupes de traitement.
+
+
+
+
+```{r fig.align="center"}
+library(cobalt)
+# Histogramme des scores de propension
+bal.plot(IPW_Model, var.name = "prop.score", which = "un",
+         type = "histogram", mirror = TRUE)
+
+```
+
+L'histogramme montre que les deux groupes non fumeuses ($T=0$) en rouge, et fumeuses ($T=1$) en bleu, partagent une plage commune de scores de propension s'étendant approximativement de $0.1$ à $0.75$. Le groupe non fumeur (en rouge) présente une concentration marquée autour de $0.15-0.20$, avec une barre particulèrement haute (proportion $\approx$ 0.14) qui traduit une forte densité d'individus à faible probabilité prédite de fumer. Le groupe fumeur (en bleu) présente une distribution plus étalée avec des effectifs plus important dans la plage $0.40-0.70$, ce qui est attendu puisque les profils de covariables des fumeuses sont associés à une probabilité prédite plus élevée de fumer. On observe néanmoins un recouvrement satisfaisant sur l'ensemble de la plage: Chaque intervalle de score contient des individus des deux groupes. Au-delà de $0.75$, les effectifs deviennent quasi nuls dans les deux groupes, ce qui ne pose pas de problèmes de positivité.
+
+
+
+On peut également afficher les distributions sous forme de courbes de densité, ce qui permet de mieux visualiser le recouvrement :
+
+```{r fig.align="center"}
+
+# Densité des scores de propension
+
+bal.plot(IPW_Model, var.name = "prop.score", which = "un",
+         type = "density", mirror = TRUE)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##### 1.4) Calculer (extraire) les poids de probabilité inverse pour chaque individu.
+
+
+
+```{r}
+# Extraire les poids estimés pour chaque individu
+IPWeights <- IPW_Model$weights
+head(IPWeights)
+```
+
+
+
+
+##### 1.5) Vérifier la qualité d'ajustement du modèle de score de propension en calculant la différence standardisée des moyennes (SMD).
+
+Une règle empirique pour déterminer un équilibre adéquat est que la SMD (en valeur absolue) de toutes les covariables soit contrôlée en dessous de 0.1.
+
+
+
+```{r}
+bal.tab(IPW_Model, stats = "mean.diffs", un = TRUE,s.d.denom = "pooled")
+```
+
+
+Avant pondération, plusieurs covariables présentent un déséquilibre notable entre les groupes fumeuses et non-fumeuses. Le score de propension lui-même affiche une SMD de 0.88, et les indicatrices RACE_1 (0.32) et RACE_3 (-0.32) montrent un déséquilibre marqué. Les autres covariables (AGE, LWT, RACE_2, HT) sont en revanche déjà proches de l'équilibre avec des |SMD| inférieures à 0.10. Après pondération IPW, toutes les valeurs de SMD passent largement en dessous du seuil de 0.10 en valeur absolue. Cela confirme que le modèle de score de propension a correctement équilibré les covariables entre les groupes de traitement, et que la pseudo-population pondérée peut être utilisée pour estimer l'effet causal.
+
+On peut également visualiser cet équilibre à l'aide d'un Love plot, qui 
+affiche la SMD absolue pour chaque covariable avant et après pondération, 
+avec une ligne verticale en pointillés au seuil choisi. 
+
+```{r fig.align="center"}
+love.plot(IPW_Model, 
+          binary = "std",
+          thresholds = 0.1,
+          abs = TRUE,
+          un = TRUE)
+```
+
+
+
+Ce Love plot affiche la différence standardisée absolue (SMD) pour chaque 
+covariable avant pondération (points roses) et après pondération IPW 
+(points bleus). La ligne verticale en pointillés marque le seuil de 0.1.
+
+Avant pondération, plusieurs covariables dépassent le seuil de 0.1.
+Après pondération IPW, tous les points bleus se situent bien en deçà du 
+seuil de 0.1, proches de zéro. Cela confirme que la pondération a 
+efficacement équilibré les covariables entre les groupes de traitement.
+
+
+
+##### 1.6) Calculer l'effet causal moyen (ATE) en utilisant la différence des moyennes pondérées.
+
+
+
+```{r}
+y1 <- weighted.mean(hosmer$Y[hosmer$T == 1], IPWeights[hosmer$T == 1])
+y0 <- weighted.mean(hosmer$Y[hosmer$T == 0], IPWeights[hosmer$T == 0])
+ATE <- y1 - y0
+ATE
+```
+
+Cette méthode donne l'estimation ponctuelle de l'ATE mais ne fournit 
+pas d'erreur standard ni d'intervalle de confiance.
+
+
+
+##### 1.7) Calculer l'effet causal moyen (ATE) en estimant un modèle de régression pondéré de $Y$ sur $T$.
+
+On estime un modèle linéaire pondéré :
+
+
+
+```{r}
+ATE_glm <- glm_weightit(Y ~ T, 
+                         data = hosmer, 
+                         family = gaussian, 
+                         weightit = IPW_Model,
+                         vcov = "BS",
+                         R = 100)
+summary(ATE_glm, ci = TRUE, level = 0.95)
+```
+
+
+L'intercept $\hat{\gamma}_0 = 3110.2$ correspond à la moyenne pondérée 
+du poids de naissance chez les non fumeuses. Le coefficient 
+$\hat{\gamma}_1 = -361.3$ correspond à l'ATE.
+
+L'estimation donne un ATE de **−361.3 grammes**, similaire à ce qu'on a 
+obtenu dans la question 1.6. Cela signifie qu'après 
+ajustement sur les facteurs de confusion par pondération IPW, le 
+tabagisme maternel pendant la grossesse entraîne en moyenne une 
+diminution du poids de naissance d'environ 361.3 grammes par rapport aux 
+mères non fumeuses. Le signe négatif est cohérent avec les connaissances 
+médicales sur l'effet délétère du tabac sur la croissance fœtale.
+
+
+
+# **Partie 2. G-computation**
+
+
+
+
+
+##### 2.1) Construire le modèle d'outcome par régression linéaire multivariée.
+
+
+
+```{r}
+outcome_model <- glm(formula = Y ~ T + AGE  + RACE + LWT+RACE:LWT+RACE:T,
+                     data = hosmer, family = gaussian)
+```
+
+
+
+
+##### 2.2) Créer deux jeux de données contrefactuels, `hosmer0` et `hosmer1`, dans lesquels tous les sujets sont respectivement considérés comme non traités et traités.
+
+
+
+
+
+```{r}
+hosmer0 <- hosmer
+hosmer1 <- hosmer
+hosmer0$T <- 0  # Tous les sujets sont passés en non traités
+hosmer1$T <- 1  # Tous les sujets sont passés en traités
+```
+
+
+
+
+##### 2.3) Utiliser le modèle d'outcome pour prédire la réponse individuelle $\hat{\mathbb{E}}(Y \mid T, W)$ pour chaque sujet dans `hosmer0` et dans `hosmer1`.
+
+
+
+```{r}
+E0i <- predict(outcome_model, newdata = hosmer0, type = "response")
+E1i <- predict(outcome_model, newdata = hosmer1, type = "response")
+```
+
+
+
+##### 2.4) Calculer la moyenne standardisée (marginale) de l'outcome dans `hosmer0` et `hosmer1` :
+
+
+
+```{r}
+E0 <- mean(E0i)
+E1 <- mean(E1i)
+```
+
+
+
+##### 2.5) Calculer l'effet moyen du traitement (ATE) :
+
+
+
+
+```{r}
+ATE <- E1 - E0
+ATE
+```
+
+
+##### 2.6) Calculer l'effet moyen du traitement (ATE) en utilisant la fonction 
+`standardize_glm` du package *stdReg2*.
+
+
+
+
+
+```{r}
+library(stdReg2)
+STD_GLM_Model <- standardize_glm(formula = Y ~ T + AGE  + RACE+ RACE:T + RACE:LWT,
+                                  data = hosmer, family = "gaussian",
+                                  values = list(T = c(0, 1)), reference = 0,
+                                  ci_level = 0.95,
+                                  contrasts = "difference")
+ATE <- STD_GLM_Model$res_contrast[[2]]$est_table$Estimate[2]
+
+IC_ATE <- c(STD_GLM_Model$res_contrast[[2]]$est_table$lower.0.95[2],
+            STD_GLM_Model$res_contrast[[2]]$est_table$upper.0.95[2])
+
+#AVERAGE TREATMENT EFFECT
+ATE
+#95% CONFIDENCE INTERVAL FOR ATE
+IC_ATE
+```
+
+
+
+On retrouve un ATE de **−369 grammes**, très proche de ce qu'on a 
+obtenu par IPTW (-361.3). 
+
+##### 2.7) En utilisant la fonction `standardize` du package *stdReg2*, calculer l'ATE et son intervalle de confiance à 95 % par bootstrap.
+
+
+```{r}
+predict_glm <- function(object, newdata) {
+  predict(object, newdata = newdata, type = "response")
+}
+
+STD_Model_BOOTSTRAP <- standardize(
+  fitter = "glm",
+  arguments = list(
+    formula = Y ~ T + AGE + RACE + RACE:T + RACE:LWT,
+    family = gaussian,
+    data = hosmer
+  ),
+  predict_fun = predict_glm,
+  data = hosmer,
+  values = list(T = c(0, 1)),
+  B = 100,
+  ci_level = 0.95,
+  contrasts = "difference",
+  reference = 0,
+  progressbar=FALSE
+)
+
+
+ATE <- STD_Model_BOOTSTRAP$res_contrast[[2]]$est_table$Estimate[2]
+IC_ATE <- c(STD_Model_BOOTSTRAP$res_contrast[[2]]$est_table$lower.0.95[2],
+            STD_Model_BOOTSTRAP$res_contrast[[2]]$est_table$upper.0.95[2])
+
+#AVERAGE TREATMENT EFFECT
+ATE
+#95% CONFIDENCE INTERVAL FOR ATE
+IC_ATE
+```
+
+Les intervalles de confiance affichés sont des intervalles de confiance bootstrap percentile : ils sont obtenus en prenant les quantiles 2.5 % et 97.5 % de la distribution empirique des $B = 100$ ATE bootstrappés. 
+
+On retrouve bien un ATE de **−369 grammes**, exactement pareil que celui obtenu avec `standardize_glm`.
+
+
+
+
+
+
+
+
+## Estimateur Doublement Robuste (Doubly Robust)
+
+
+##### 2.8) En utilisant la fonction `standardize_glm_dr` du package *stdReg2*,calculer l'estimateur doublement robuste de ATE.
+
+
+
+```{r}
+
+STD_GLM_Model_DR <- standardize_glm_dr(
+  formula_outcome  = Y ~ T + AGE + RACE + RACE:T + RACE:LWT,
+  formula_exposure = T ~ AGE + RACE + RACE:LWT,
+  data = hosmer,
+  family_outcome   = "gaussian",
+  family_exposure  = "binomial",
+  values = list(T = c(0,1)),
+  reference = 0,
+  ci_level = 0.95,
+  contrasts = "difference"
+)
+
+ATE_DR <- STD_GLM_Model_DR$res_contrast[[2]]$est_table[2]$Estimate[2]
+IC_ATE_DR <- c(STD_GLM_Model_DR$res_contrast[[2]]$est_table$lower.0.95[2],
+               STD_GLM_Model_DR$res_contrast[[2]]$est_table$upper.0.95[2])
+
+# Average Treatment Effect (Doubly Robust)
+ATE_DR
+
+# Intervalle de confiance à 95%
+IC_ATE_DR
+```
+
+**Remarque** : la propriété de double robustesse de cet estimateur 
+n'est garantie que si le GLM d'outcome utilise une fonction de lien 
+canonique (identité pour la famille gaussienne, logit pour la binomiale, 
+log pour la Poisson, etc.). Lorsqu'on spécifie l'argument `family_outcome`, 
+la fonction `standardize_glm_dr` utilise par défaut le lien canonique 
+associé à cette famille.
+
+
+On retrouve un ATE de **−368.6661 grammes**, très proche de ce qu'on avait obtenu avant par IPTW et par `standardize_glm`.
+
+
+
+
+
+
+## G-computation pour des données de survie
+
+
+
+
+##### 2.9) Charger le jeu de données `dataDIVAT2`, et afficher les premières lignes.
+
+
+
+```{r}
+library(RISCA)
+data("dataDIVAT2")
+# Afficher les premières lignes du jeu de données
+head(dataDIVAT2)
+```
+
+
+
+##### 2.10) À l'aide de la fonction `port` du package *RISCA*, vérifier l'hypothèse de positivité.
+
+
+
+```{r}
+port(group = "ecd",
+     cov.quanti = c("age"),
+     cov.quali = c("retransplant", "hla"),
+     data = dataDIVAT2,
+     alpha = 0.05, beta = 0.05, gamma = 1)
+
+```
+
+
+
+
+
+
+##### 2.11) Vérifier l'hypothèse de positivité en traçant la distribution des scores de propension.
+
+
+```{r}
+library(WeightIt)
+library(cobalt)
+
+IPW_Model <- weightit(ecd ~ age + hla + retransplant,
+                      method = "glm", estimand = "ATE",
+                      data = dataDIVAT2,
+                      stabilize = TRUE)
+
+bal.plot(IPW_Model, var.name = "prop.score", which = "un",
+         type = "histogram", mirror = TRUE)
+```
+
+
+La fonction `port()` signale une violation potentielle de la 
+positivité : parmi les individus de moins de 40 ans (N=446, 
+soit $24,3\%$ de l'échantillon), seuls $4,0 \%$ sont exposés. 
+L'histogramme miroir des scores de propension suggère pourtant 
+un recouvrement satisfaisant sur l'ensemble de la plage $[0,1]$, 
+sans zone vide. Cette apparente divergence s'explique par le 
+fait que les deux outils n'évaluent pas la positivité au même 
+niveau : `bal.plot` la vérifie marginalement sur le score 
+de propension (un résumé scalaire des covariables), tandis que 
+`port()` la vérifie conditionnellement aux covariables 
+d'origine. Un score commun aux deux groupes peut ainsi masquer 
+des sous-groupes où l'exposition reste rare. 
+
+
+
+##### 2.12) Construire le modèle d'outcome de survie en utilisant la fonction `coxph` du package *survival*.
+
+
+
+```{r}
+library(survival)
+outcome_model_survival <- coxph(
+  formula = Surv(times, failures) ~ ecd + age + hla + retransplant,
+  data = dataDIVAT2
+)
+```
+
+
+
+##### 2.13) Créer deux jeux de données contrefactuels, `dataDIVAT2_0` et `dataDIVAT2_1`, dans lesquels tous les sujets sont respectivement considérés comme non traités et traités.
+
+
+
+```{r}
+dataDIVAT2_0 <- dataDIVAT2
+dataDIVAT2_1 <- dataDIVAT2
+dataDIVAT2_0$ecd <- 0  # Tous les sujets sont passés en non traités
+dataDIVAT2_1$ecd <- 1  # Tous les sujets sont passés en traités
+```
+
+
+
+##### 2.14) Utiliser le modèle d'outcome pour prédire la fonction de survie en $t \in {1,2,3,...,17}$, $\hat{S}(t \mid A, W)$, pour chaque sujet dans `dataDIVAT2_0` et dans `dataDIVAT2_1`.
+
+
+
+```{r}
+Surv0i <- summary(survfit(outcome_model_survival, newdata = dataDIVAT2_0), times = c(1:17))$surv   
+Surv1i <- summary(survfit(outcome_model_survival, newdata = dataDIVAT2_1), times = c(1:17))$surv
+
+#view(Surv0i)
+#view(Surv0i)
+```
+
+
+
+##### 2.15) Calculer la fonction de survie standardisée (marginale) dans chaque $t \in \{1,2,3,...,17\}$ dans `dataDIVAT2_0` et `dataDIVAT2_1`, en utilisant la fonction `rowMeans` permettant de faire la moyenne par ligne d'une matrice :
+
+
+```{r}
+Surv0 <- rowMeans(Surv0i)
+Surv1 <- rowMeans(Surv1i)
+```
+
+
+##### 2.16) Calculer la *standardized survival difference* dans chaque $t \in \{1,2,3,...,17\}$.
+
+
+
+```{r}
+STD_SURV_DIFF <- Surv1 - Surv0
+STD_SURV_DIFF
+```
+
+
+
+##### 2.17) Calculer la *standardized survival difference* dans chaque $t \in \{1,2,3,...,17\}$ en utilisant la fonction `standardize_coxph` du package *stdReg2*.
+
+
+```{r}
+library(stdReg2)
+STD_COXPH_Model <- standardize_coxph(
+  formula = Surv(times, failures) ~ ecd + age + hla + retransplant,
+  data = dataDIVAT2,
+  times = c(1:17),
+  values = list(ecd = c(0, 1)),
+  reference = 0,
+  ci_level = 0.95,
+  contrasts = "difference"
+)
+
+# Extraire toutes les estimations de chaque time point entre 1 et 17
+STD_SURV_DIFF <- sapply(STD_COXPH_Model$res_contrast[[2]]$est_table,
+                    function(x) x$Estimate[2])
+
+
+# Extraire tous les IC à 95% de chaque time point entre 1 et 17
+
+
+IC_STD_SURV_DIFF <- data.frame(
+  lower= sapply(STD_COXPH_Model$res_contrast[[2]]$est_table,
+         function(x) x$lower.0.95[2]), 
+  upper=sapply(STD_COXPH_Model$res_contrast[[2]]$est_table,
+         function(x) x$`upper 0.95`[2])
+)
+
+# Standardized survival difference
+STD_SURV_DIFF
+
+# 95% CONFIDENCE INTERVAL FOR Standardized survival difference
+IC_STD_SURV_DIFF
+```
+
+
+
+
+
+
+
+##### 2.18) En utilisant la fonction `plot` du package *stdReg2*, tracer les courbes de survies dans les deux groupes de traitements ainsi que la standardized difference.
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+
+###courbes de survies dans les deux groupes de traitements###
+
+plot(x=STD_COXPH_Model,
+     legendpos = "bottomleft")
+
+
+
+###Standardized difference###
+ 
+ plot(x=STD_COXPH_Model,
+      contrast="difference",
+      reference=0,
+    legendpos = "bottomleft")
+
+```
+
+
+
+
+
+
+
+
+
+
+## Références
+
+
+
+
+
+
+<p id="ref1">
+<sup>1</sup> Public Health England. <i>SARS-CoV-2 variants of concern and variants under investigation in England: Technical Briefing 20</i>, Table 5. 
+<a href="https://assets.publishing.service.gov.uk/media/610d031f8fa8f506aab17866/Technical_Briefing_20.pdf" target="_blank">
+[Link]
+</a>
+</p>
+
+<p id="ref2">
+<sup>2</sup> National Center for Health Statistics. <i>NHANES I - Epidemiologic Followup Study (NHEFS)</i>. 
+<a href="https://wwwn.cdc.gov/nchs/nhanes/nhefs/" target="_blank">
+[Link]
+</a>
+</p>
+
+
+
+
+
+<p id="ref3">
+<sup>3</sup> Zhou T, Tong G, Li F, Thomas LE. <i>PSweight: Propensity Score Weighting for Causal Inference with Observational Studies and Randomized Trials</i>. R package. 
+<a href="https://cran.r-project.org/web/packages/PSweight/index.html" target="_blank">
+[Link]
+</a>
+</p>
+
+
+
+<p id="ref4">
+<sup>4</sup> Noah Greifer <i>WeightIt: Weighting for Covariate Balance in Observational Studies</i>. R package. 
+<a href="https://cran.r-project.org/web/packages/WeightIt/index.html" target="_blank">
+[Link]
+</a>
+</p>
+
+
+
+<p id="ref5">
+<sup>5</sup> Noah Greifer <i>Covariate Balance Tables and Plots: A Guide to the cobalt Package</i>. R package. 
+<a href="https://cran.r-project.org/web/packages/cobalt/vignettes/cobalt.html" target="_blank">
+[Link]
+</a>
+</p>
